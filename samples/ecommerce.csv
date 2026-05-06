@@ -1,0 +1,6 @@
+id,email,name,phone,created_at,status,data
+1,alice@example.com,Alice Smith,555-0101,2024-01-15 09:30:00,active,
+2,bob@example.com,Bob Jones,555-0102,2024-02-20 14:15:00,active,some notes
+3,carol@example.com,Carol Lee,,2024-03-10 11:00:00,inactive,
+4,dave@example.com,Dave Kim,555-0104,2024-04-05 16:45:00,active,priority customer
+5,eve@example.com,Eve Patel,555-0105,2024-05-12 08:20:00,suspended,

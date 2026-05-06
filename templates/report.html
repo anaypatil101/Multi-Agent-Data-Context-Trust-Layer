@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Context Layer Report</title>
+  <style>
+    :root {
+      --bg: #0f111a;
+      --surface: #1a1d2e;
+      --border: #2a2d3e;
+      --text: #e0e0e0;
+      --muted: #8888aa;
+      --green: #4ade80;
+      --yellow: #facc15;
+      --red: #f87171;
+      --blue: #60a5fa;
+      --purple: #c084fc;
+      --orange: #fb923c;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.875rem;
+      margin-bottom: 2rem;
+    }
+
+    .stats {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      min-width: 150px;
+    }
+
+    .stat-card .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-card .value { font-size: 1.5rem; font-weight: 600; margin-top: 0.25rem; }
+
+    .table-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+
+    .table-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .table-header h2 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .domain-tag {
+      background: rgba(96, 165, 250, 0.15);
+      color: var(--blue);
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+    }
+
+    .trust-badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+    }
+
+    .trust-high { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+    .trust-mid  { background: rgba(250, 204, 21, 0.15); color: var(--yellow); }
+    .trust-low  { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+
+    .review-flag {
+      background: rgba(248, 113, 113, 0.15);
+      color: var(--red);
+      font-size: 0.7rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      margin-left: 0.5rem;
+    }
+
+    .pii-badge {
+      background: rgba(251, 146, 60, 0.18);
+      color: var(--orange);
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      margin-left: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .table-body { padding: 1rem 1.5rem; }
+    .table-body p { color: var(--muted); font-size: 0.875rem; margin-bottom: 1rem; }
+
+    .columns-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+    }
+
+    .columns-table th {
+      text-align: left;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .columns-table td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .columns-table tr:last-child td { border-bottom: none; }
+
+    .col-name { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: var(--purple); }
+    .col-type { font-family: 'JetBrains Mono', monospace; color: var(--muted); font-size: 0.75rem; }
+
+    .relationships {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .relationships h3 {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    .rel-item {
+      font-size: 0.8125rem;
+      padding: 0.3rem 0;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .rel-arrow { color: var(--blue); }
+    .rel-type { color: var(--muted); font-size: 0.7rem; }
+
+    .meta {
+      margin-top: 2rem;
+      padding: 1rem 1.5rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .meta dt { font-weight: 600; display: inline; }
+    .meta dd { display: inline; margin-left: 0.25rem; margin-right: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Context Layer Report</h1>
+  <p class="subtitle">Generated {{ context.metadata.generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</p>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="label">Tables</div>
+      <div class="value">{{ context.metadata.table_count }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Columns</div>
+      <div class="value">{{ context.metadata.column_count }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Avg Trust</div>
+      <div class="value" style="color: {% if context.metadata.average_trust >= 0.8 %}var(--green){% elif context.metadata.average_trust >= 0.6 %}var(--yellow){% else %}var(--red){% endif %}">
+        {{ "%.1f%%"|format(context.metadata.average_trust * 100) }}
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Needs Review</div>
+      <div class="value" style="color: {% if context.metadata.review_count == 0 %}var(--green){% else %}var(--red){% endif %}">
+        {{ context.metadata.review_count }}
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Sensitive Cols</div>
+      <div class="value" style="color: {% if context.metadata.sensitive_column_count == 0 %}var(--muted){% else %}var(--orange){% endif %}">
+        {{ context.metadata.sensitive_column_count }}
+      </div>
+    </div>
+  </div>
+
+  {% for table in context.tables %}
+  <div class="table-card">
+    <div class="table-header">
+      <div>
+        <h2>{{ table.table_name }}</h2>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span class="domain-tag">{{ table.domain }}</span>
+        <span class="trust-badge {% if table.trust_score >= 0.8 %}trust-high{% elif table.trust_score >= 0.6 %}trust-mid{% else %}trust-low{% endif %}">
+          {{ "%.0f%%"|format(table.trust_score * 100) }} trust
+        </span>
+        {% if table.needs_review %}<span class="review-flag">NEEDS REVIEW</span>{% endif %}
+      </div>
+    </div>
+
+    <div class="table-body">
+      <p>{{ table.definition }}</p>
+
+      <table class="columns-table">
+        <thead>
+          <tr>
+            <th>Column</th>
+            <th>Type</th>
+            <th>Definition</th>
+            <th>Semantic</th>
+            <th>Trust</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for col in table.columns %}
+          <tr>
+            <td class="col-name">
+              {{ col.column_name }}
+              {% if col.is_sensitive %}<span class="pii-badge">PII: {{ col.pii_category }}</span>{% endif %}
+            </td>
+            <td class="col-type">{{ col.data_type }}</td>
+            <td>{{ col.definition }}</td>
+            <td><span class="domain-tag">{{ col.semantic_type }}</span></td>
+            <td>
+              <span class="trust-badge {% if col.trust_score >= 0.8 %}trust-high{% elif col.trust_score >= 0.6 %}trust-mid{% else %}trust-low{% endif %}">
+                {{ "%.0f%%"|format(col.trust_score * 100) }}
+              </span>
+              {% if col.needs_review %}<span class="review-flag">REVIEW</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if table.relationships %}
+    <div class="relationships">
+      <h3>Relationships</h3>
+      {% for rel in table.relationships %}
+      <div class="rel-item">
+        {{ rel.source_table }}.{{ rel.source_column }}
+        <span class="rel-arrow">&rarr;</span>
+        {{ rel.target_table }}.{{ rel.target_column }}
+        <span class="rel-type">({{ rel.relationship_type }}, {{ "%.0f%%"|format(rel.confidence * 100) }})</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="meta">
+    <dl>
+      <dt>Schema type:</dt><dd>{{ context.metadata.schema_type }}</dd>
+      {% for agent, model in context.metadata.models_used.items() %}
+      <dt>{{ agent }}:</dt><dd>{{ model }}</dd>
+      {% endfor %}
+    </dl>
+  </div>
+</body>
+</html>
