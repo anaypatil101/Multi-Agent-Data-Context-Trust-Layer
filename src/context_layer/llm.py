@@ -4,8 +4,8 @@ Centralises model selection so every agent gets the right model tier
 without hard-coding model names. Tier routing lets us swap models via
 env vars (useful for cost control and A/B testing in production).
 
-NOTE: Currently wired to OpenAI for testing. Switch back to Anthropic
-before publishing by reverting this file and pyproject.toml.
+Provider is OpenAI. To switch to Anthropic, replace `langchain_openai`
+with `langchain_anthropic` and update the model name defaults.
 """
 
 from __future__ import annotations

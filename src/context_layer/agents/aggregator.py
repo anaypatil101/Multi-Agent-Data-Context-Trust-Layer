@@ -1,12 +1,12 @@
 """Aggregator — compiles all agent outputs into the final ContextLayer.
 
-Mostly structural Python logic joining data from four upstream agents.
-Uses Haiku only to generate a brief executive summary. This is the
-cheapest node in the pipeline because the heavy thinking is already done.
+Purely deterministic: joins outputs from all upstream agents into one
+governed asset record. No LLM calls — the heavy reasoning is done.
 """
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from context_layer.models.outputs import (
@@ -27,19 +27,22 @@ from context_layer.models.state import PipelineState
 
 def aggregator_node(state: PipelineState) -> dict:
     """Merge all agent outputs into a single ContextLayer."""
+    t0 = time.monotonic()
+
     tables: list[TableSchema] = state["tables"]
     profiler: ProfilerOutput = state["profiler_output"]
     lineage: LineageOutput = state["lineage_output"]
     pii: PIIOutput = state["pii_output"]
     semantic: SemanticOutput = state["semantic_output"]
     trust: TrustOutput = state["trust_output"]
+    logger = state.get("run_logger")
+    run_id = state.get("run_id")
 
     pii_map: dict[tuple[str, str], str] = {
         (f.table_name, f.column_name): f.pii_category
         for f in pii.flagged_columns
     }
 
-    # Build lookup tables for fast access
     profile_map: dict[str, dict[str, object]] = {}
     for tp in profiler.tables:
         col_map = {}
@@ -72,7 +75,6 @@ def aggregator_node(state: PipelineState) -> dict:
         if r.target_table != r.source_table:
             rel_map.setdefault(r.target_table, []).append(ctx_rel)
 
-    # Assemble tables
     ctx_tables: list[ContextLayerTable] = []
     total_cols = 0
 
@@ -116,11 +118,11 @@ def aggregator_node(state: PipelineState) -> dict:
         generated_at=datetime.now(timezone.utc),
         schema_type=state.get("schema_type", "sql"),
         models_used={
-            "profiler": "claude-haiku-4-5 (fast)",
-            "lineage": "claude-haiku-4-5 (fast)",
+            "profiler": "gpt-4o-mini (fast)",
+            "lineage": "gpt-4o-mini (fast)",
             "pii_detector": "deterministic (no LLM)",
-            "semantic": "claude-sonnet-4-6 (strong)",
-            "trust_scorer": "claude-sonnet-4-6 (strong)",
+            "semantic": "gpt-4o (strong)",
+            "trust_scorer": "gpt-4o (strong)",
             "aggregator": "deterministic (no LLM)",
         },
         table_count=len(ctx_tables),
@@ -128,10 +130,20 @@ def aggregator_node(state: PipelineState) -> dict:
         average_trust=trust.average_confidence,
         review_count=trust.review_count,
         sensitive_column_count=pii.sensitive_column_count,
-        # Surface agent execution health so consumers can tell how much of
-        # the layer was generated in fallback mode (vs all-green run).
         agent_health=dict(state.get("agent_health", {}) or {}),
+        run_id=run_id,
     )
+
+    elapsed = (time.monotonic() - t0) * 1000
+
+    if logger:
+        logger.log(
+            agent="aggregator",
+            latency_ms=elapsed,
+            health="ok",
+            response_preview=f"{len(ctx_tables)} tables, {total_cols} cols assembled",
+        )
+        logger.flush()
 
     return {
         "context_layer": ContextLayer(tables=ctx_tables, metadata=metadata)

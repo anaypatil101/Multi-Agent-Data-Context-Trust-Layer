@@ -244,6 +244,11 @@ class ContextLayerMetadata(BaseModel):
         "Lets consumers reason about which parts of the context layer are "
         "trustworthy when an upstream agent ran in fallback mode.",
     )
+    run_id: str | None = Field(
+        default=None,
+        description="Unique run identifier. Use GET /runs/{run_id} to "
+        "retrieve the full per-agent audit trail for this run.",
+    )
 
 
 class ContextLayer(BaseModel):

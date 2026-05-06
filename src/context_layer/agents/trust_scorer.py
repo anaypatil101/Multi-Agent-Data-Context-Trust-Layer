@@ -12,7 +12,7 @@ DESIGN RATIONALE (interview-ready):
      hallucinate and their results can be explained line-by-line.
 
   2. LLM ASSESSMENT (weight 0.6):
-     Sonnet evaluates whether the generated definition is semantically
+     gpt-4o evaluates whether the generated definition is semantically
      accurate and complete. This catches domain-level errors that rules
      can't — e.g., a definition that confuses "revenue" with "profit".
      But LLMs can be overconfident, which is why they don't get full
@@ -41,6 +41,8 @@ FAILURE HANDLING:
 """
 
 from __future__ import annotations
+
+import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -149,14 +151,16 @@ Be skeptical — if the definition is vague or could be wrong, score low."""
 
 def _assess_batch_with_llm(
     items: list[dict],
-) -> list[LLMTrustAssessment | None]:
+) -> tuple[list[LLMTrustAssessment | None], float, int]:
     """Send each item to the LLM for semantic confidence scoring.
 
-    Returns one entry per item; None means that single item failed all
-    its retries (the caller falls back to deterministic-only for it).
+    Returns (assessments, total_latency_ms, total_attempts).
+    Each assessment is None when that item failed all retries.
     """
     llm = get_llm("strong").with_structured_output(LLMTrustAssessment)
     results: list[LLMTrustAssessment | None] = []
+    total_latency = 0.0
+    total_attempts = 0
 
     for item in items:
         prompt = _LLM_PROMPT.format(**item)
@@ -170,10 +174,12 @@ def _assess_batch_with_llm(
                 HumanMessage(content=_p),
             ])
 
-        assessment, _err = call_with_retries(_invoke)
-        results.append(assessment)
+        rr = call_with_retries(_invoke)
+        results.append(rr.value)
+        total_latency += rr.latency_ms
+        total_attempts += rr.attempts
 
-    return results
+    return results, total_latency, total_attempts
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +192,7 @@ def trust_scorer_node(state: PipelineState) -> dict:
     profiler: ProfilerOutput = state["profiler_output"]
     lineage: LineageOutput = state["lineage_output"]
     agent_health = state.get("agent_health", {}) or {}
+    logger = state.get("run_logger")
 
     orphan_set = set(lineage.orphan_tables)
 
@@ -199,9 +206,6 @@ def trust_scorer_node(state: PipelineState) -> dict:
             }
         profile_lookup[tp.table_name] = col_map
 
-    # Detect upstream failures: when Semantic / Profiler degraded fully,
-    # we have nothing trustworthy to score. Floor and skip the LLM batch
-    # entirely — saves tokens AND avoids fake-confidence scores.
     upstream_failed = (
         agent_health.get("semantic") == "failed"
         or agent_health.get("profiler") == "failed"
@@ -211,7 +215,6 @@ def trust_scorer_node(state: PipelineState) -> dict:
     det_results: list[tuple[str, str, str | None, str, float, list[str]]] = []
 
     for table_def in semantic.tables:
-        # Table-level scoring
         det_score, det_flags = _deterministic_score(
             "table", table_def.table_name, table_def.definition,
             is_orphan=table_def.table_name in orphan_set,
@@ -229,7 +232,6 @@ def trust_scorer_node(state: PipelineState) -> dict:
             "business_context": table_def.domain,
         })
 
-        # Column-level scoring
         col_profiles = profile_lookup.get(table_def.table_name, {})
         for col_def in table_def.column_definitions:
             cp = col_profiles.get(col_def.column_name, {})
@@ -256,25 +258,26 @@ def trust_scorer_node(state: PipelineState) -> dict:
                 "business_context": col_def.business_context,
             })
 
-    # Skip the LLM batch entirely on upstream failure to save tokens.
+    t0 = time.monotonic()
     if upstream_failed:
         llm_assessments: list[LLMTrustAssessment | None] = [None] * len(llm_items)
+        batch_latency = 0.0
+        batch_attempts = 0
     else:
-        llm_assessments = _assess_batch_with_llm(llm_items)
+        llm_assessments, batch_latency, batch_attempts = _assess_batch_with_llm(llm_items)
+    total_wall = (time.monotonic() - t0) * 1000
 
     scores: list[TrustScore] = []
     for (etype, ename, parent, definition, det_s, flags), llm_a in zip(
         det_results, llm_assessments
     ):
         if upstream_failed:
-            # Floor: never claim confidence on upstream-degraded data.
             final = 0.0
             llm_score = 0.0
             llm_reason = "upstream agent failed; score floored to 0"
             flags = [*flags, "upstream_failure"]
             needs_review = True
         elif llm_a is None:
-            # Per-item LLM retry exhausted: fall back to deterministic only.
             final = DETERMINISTIC_WEIGHT * det_s
             llm_score = 0.0
             llm_reason = "LLM scoring unavailable after retries; deterministic-only"
@@ -311,9 +314,6 @@ def trust_scorer_node(state: PipelineState) -> dict:
     review_count = sum(1 for s in scores if s.needs_review)
     avg = sum(s.score for s in scores) / len(scores) if scores else 0.0
 
-    # Agent health for the trust scorer itself: if every item's LLM call
-    # failed, mark degraded; otherwise ok. (Upstream failure doesn't
-    # downgrade the trust scorer — it did its job correctly by flooring.)
     if not upstream_failed and llm_items:
         non_null = sum(1 for a in llm_assessments if a is not None)
         if non_null == 0:
@@ -324,6 +324,17 @@ def trust_scorer_node(state: PipelineState) -> dict:
             self_health = "ok"
     else:
         self_health = "ok"
+
+    if logger:
+        logger.log(
+            agent="trust_scorer",
+            latency_ms=batch_latency or total_wall,
+            attempts=batch_attempts,
+            health=self_health,
+            prompt_preview=f"{len(llm_items)} items scored (upstream_failed={upstream_failed})",
+            response_preview=f"avg={avg:.3f}, reviews={review_count}",
+            error=None if self_health == "ok" else f"health={self_health}",
+        )
 
     return {
         "trust_output": TrustOutput(

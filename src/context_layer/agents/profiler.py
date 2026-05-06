@@ -1,6 +1,6 @@
 """Profiler Agent — analyses column types, null rates, value patterns, anomalies.
 
-Uses Haiku (fast tier) because profiling is a structured extraction task
+Uses gpt-4o-mini (fast tier) because profiling is a structured extraction task
 that doesn't need deep reasoning. The LLM reads the DDL and returns a
 typed ColumnProfile for every column; we lean on structured output to
 guarantee the schema.
@@ -59,12 +59,7 @@ def _build_schema_text(tables: list[TableSchema]) -> str:
 
 
 def _degraded_output(tables: list[TableSchema]) -> ProfilerOutput:
-    """Empty per-table profile — used when all retries are exhausted.
-
-    Keeping the table list (just with empty column_profiles) lets
-    downstream agents iterate as usual; they'll just find no profiler
-    annotations and operate on column names alone.
-    """
+    """Empty per-table profile — used when all retries are exhausted."""
     return ProfilerOutput(tables=[
         TableProfile(
             table_name=t.name,
@@ -79,23 +74,34 @@ def profiler_node(state: PipelineState) -> dict:
     """Run the Profiler Agent: schema → column profiles + anomalies."""
     tables: list[TableSchema] = state["tables"]
     schema_text = _build_schema_text(tables)
+    logger = state.get("run_logger")
 
     llm = get_llm("fast").with_structured_output(ProfilerOutput)
+    prompt_text = f"Profile these tables:\n\n{schema_text}"
 
     def _invoke() -> ProfilerOutput:
         return llm.invoke([
             SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content=f"Profile these tables:\n\n{schema_text}"),
+            HumanMessage(content=prompt_text),
         ])
 
-    result, err = call_with_retries(_invoke)
-    if result is not None:
-        return {
-            "profiler_output": result,
-            "agent_health": {"profiler": "ok"},
-        }
+    rr = call_with_retries(_invoke)
 
-    # All retries exhausted — degrade rather than crash the pipeline.
+    health = "ok" if rr.value is not None else "failed"
+    if logger:
+        logger.log(
+            agent="profiler",
+            latency_ms=rr.latency_ms,
+            attempts=rr.attempts,
+            health=health,
+            prompt_preview=prompt_text,
+            response_preview=rr.value.model_dump_json() if rr.value else None,
+            error=str(rr.error) if rr.error else None,
+        )
+
+    if rr.value is not None:
+        return {"profiler_output": rr.value, "agent_health": {"profiler": "ok"}}
+
     return {
         "profiler_output": _degraded_output(tables),
         "agent_health": {"profiler": "failed"},

@@ -201,12 +201,25 @@ def _parse_csv(raw: str) -> list[TableSchema]:
 
 def input_parser_node(state: PipelineState) -> dict:
     """Parse raw schema text into structured TableSchema objects."""
+    import time as _time
+
     raw = state["raw_schema"]
     schema_type = state.get("schema_type", "sql")
+    logger = state.get("run_logger")
 
+    t0 = _time.monotonic()
     if schema_type == "csv":
         tables = _parse_csv(raw)
     else:
         tables = _parse_ddl(raw)
+    elapsed = (_time.monotonic() - t0) * 1000
+
+    if logger:
+        logger.log(
+            agent="input_parser",
+            latency_ms=elapsed,
+            health="ok",
+            response_preview=f"{len(tables)} tables parsed",
+        )
 
     return {"tables": tables}

@@ -18,6 +18,7 @@ from rich.table import Table
 
 from context_layer.graph import graph
 from context_layer.models.outputs import ContextLayer
+from context_layer.run_logger import RunLogger
 
 
 def _render(ctx: ContextLayer, console: Console) -> None:
@@ -28,6 +29,7 @@ def _render(ctx: ContextLayer, console: Console) -> None:
         if sensitive
         else f"Sensitive: {sensitive}"
     )
+    run_id_text = f"  |  Run: {ctx.metadata.run_id}" if ctx.metadata.run_id else ""
     console.print(
         Panel(
             f"[bold]Context Layer Report[/bold]\n"
@@ -35,7 +37,8 @@ def _render(ctx: ContextLayer, console: Console) -> None:
             f"Columns: {ctx.metadata.column_count}  |  "
             f"Avg Trust: {ctx.metadata.average_trust:.0%}  |  "
             f"Needs Review: {ctx.metadata.review_count}  |  "
-            f"{sensitive_text}",
+            f"{sensitive_text}"
+            f"{run_id_text}",
             border_style="blue",
         )
     )
@@ -96,9 +99,12 @@ def _render(ctx: ContextLayer, console: Console) -> None:
 
 async def _run(file_path: str, schema_type: str) -> ContextLayer:
     raw = Path(file_path).read_text()
+    logger = RunLogger()
     result = await graph.ainvoke({
         "raw_schema": raw,
         "schema_type": schema_type,
+        "run_id": logger.run_id,
+        "run_logger": logger,
     })
     return result["context_layer"]
 

@@ -1,14 +1,17 @@
 """End-to-end pipeline test with mocked LLM calls.
 
 Validates that all seven nodes execute in the correct order, the parallel
-fan-out/fan-in works, PII detection masks sensitive columns, and the final
-ContextLayer is correctly assembled — all without burning Anthropic credits.
+fan-out/fan-in works, PII detection masks sensitive columns, the final
+ContextLayer is correctly assembled, and the audit trail captures every
+agent's execution — all without burning API credits.
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import json
+import shutil
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from context_layer.models.outputs import (
     ColumnDefinition,
@@ -23,9 +26,11 @@ from context_layer.models.outputs import (
     TableDefinition,
     TableProfile,
 )
+from context_layer.run_logger import RunLogger
 
 
 SAMPLE_DDL = Path(__file__).resolve().parent.parent / "samples" / "ecommerce.sql"
+_TEST_RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"
 
 
 # ---------------------------------------------------------------------------
@@ -105,26 +110,15 @@ def _fake_trust_assessment() -> LLMTrustAssessment:
 
 
 # ---------------------------------------------------------------------------
-# The test
+# Helpers
 # ---------------------------------------------------------------------------
 
-def test_full_pipeline_with_mocked_llm():
-    """Run the entire graph with mocked LLMs and verify the output."""
-    from context_layer.agents.input_parser import input_parser_node
-
-    ddl = SAMPLE_DDL.read_text()
-    parsed = input_parser_node({"raw_schema": ddl, "schema_type": "sql"})
-    tables = parsed["tables"]
-
-    profiler_out = _fake_profiler_output(tables)
-    lineage_out = _fake_lineage_output()
-    semantic_out = _fake_semantic_output(tables)
-    trust_assess = _fake_trust_assessment()
-
-    # Mock the LLM factory so no real API calls are made.
-    # Each with_structured_output() call returns a mock whose .invoke()
-    # returns the pre-built output for that agent.
-    call_count = {"profiler": 0, "lineage": 0, "semantic": 0, "trust": 0}
+def _make_mock_llm_factory(
+    profiler_out, semantic_out, trust_assess, call_count=None
+):
+    """Build a mock get_llm that dispatches by structured output schema."""
+    if call_count is None:
+        call_count = {"profiler": 0, "lineage": 0, "semantic": 0, "trust": 0}
 
     def make_mock_llm(tier):
         mock_llm = MagicMock()
@@ -155,6 +149,31 @@ def test_full_pipeline_with_mocked_llm():
         mock_llm.with_structured_output = with_structured_output
         return mock_llm
 
+    return make_mock_llm, call_count
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def test_full_pipeline_with_mocked_llm():
+    """Run the entire graph with mocked LLMs and verify the output + audit trail."""
+    from context_layer.agents.input_parser import input_parser_node
+
+    ddl = SAMPLE_DDL.read_text()
+    parsed = input_parser_node({"raw_schema": ddl, "schema_type": "sql"})
+    tables = parsed["tables"]
+
+    profiler_out = _fake_profiler_output(tables)
+    semantic_out = _fake_semantic_output(tables)
+    trust_assess = _fake_trust_assessment()
+
+    make_mock_llm, call_count = _make_mock_llm_factory(
+        profiler_out, semantic_out, trust_assess
+    )
+
+    logger = RunLogger(run_id="test-happy")
+
     with patch("context_layer.agents.profiler.get_llm", make_mock_llm), \
          patch("context_layer.agents.lineage.get_llm", make_mock_llm), \
          patch("context_layer.agents.semantic.get_llm", make_mock_llm), \
@@ -162,30 +181,32 @@ def test_full_pipeline_with_mocked_llm():
 
         from context_layer.graph import build_graph
         graph = build_graph()
-        result = graph.invoke({"raw_schema": ddl, "schema_type": "sql"})
+        result = graph.invoke({
+            "raw_schema": ddl,
+            "schema_type": "sql",
+            "run_id": logger.run_id,
+            "run_logger": logger,
+        })
 
-    # --- Verify the output ---
     ctx: ContextLayer = result["context_layer"]
 
-    # 1. All 6 tables present
+    # --- Core pipeline assertions ---
+
     table_names = {t.table_name for t in ctx.tables}
     assert table_names == {
         "users", "categories", "products", "orders", "order_items", "payments"
     }, f"Expected 6 tables, got {table_names}"
 
-    # 2. Metadata is populated
     assert ctx.metadata.table_count == 6
     assert ctx.metadata.column_count > 0
     assert ctx.metadata.average_trust > 0
 
-    # 3. PII detection fired — email, phone, name columns flagged
     pii: PIIOutput = result["pii_output"]
     pii_cols = {(f.table_name, f.column_name) for f in pii.flagged_columns}
     assert ("users", "email") in pii_cols, "users.email should be flagged as PII"
     assert ("users", "phone") in pii_cols, "users.phone should be flagged as PII"
     assert pii.sensitive_column_count > 0
 
-    # 4. Sensitivity propagated to final output
     users_table = next(t for t in ctx.tables if t.table_name == "users")
     email_col = next(c for c in users_table.columns if c.column_name == "email")
     assert email_col.is_sensitive is True
@@ -195,30 +216,60 @@ def test_full_pipeline_with_mocked_llm():
     assert phone_col.is_sensitive is True
     assert phone_col.pii_category == "phone"
 
-    # Non-PII column should not be flagged
     id_col = next(c for c in users_table.columns if c.column_name == "id")
     assert id_col.is_sensitive is False
     assert id_col.pii_category is None
 
-    # 5. sensitive_column_count in metadata
     assert ctx.metadata.sensitive_column_count == pii.sensitive_column_count
 
-    # 6. All agents were called
     assert call_count["profiler"] == 1
     assert call_count["lineage"] == 1
     assert call_count["semantic"] == 1
-    assert call_count["trust"] > 0  # Called once per entity
+    assert call_count["trust"] > 0
 
-    # 7. Trust scores exist on every column
     for tbl in ctx.tables:
         for col in tbl.columns:
             assert 0.0 <= col.trust_score <= 1.0, f"{tbl.table_name}.{col.column_name} has bad trust"
+
+    # --- Audit trail assertions ---
+
+    assert ctx.metadata.run_id == "test-happy"
+
+    entries = logger.entries
+    agent_names = [e["agent"] for e in entries]
+    assert "input_parser" in agent_names
+    assert "profiler" in agent_names
+    assert "lineage" in agent_names
+    assert "pii_detector" in agent_names
+    assert "semantic" in agent_names
+    assert "trust_scorer" in agent_names
+    assert "aggregator" in agent_names
+
+    for entry in entries:
+        assert entry["run_id"] == "test-happy"
+        assert "timestamp" in entry
+        assert "latency_ms" in entry
+        assert entry["health"] in ("ok", "degraded", "failed")
+
+    # JSONL file was flushed by the aggregator
+    jsonl_path = _TEST_RUNS_DIR / "test-happy.jsonl"
+    assert jsonl_path.exists(), "Audit trail JSONL was not flushed"
+    lines = jsonl_path.read_text().strip().split("\n")
+    assert len(lines) == len(entries)
+    for line in lines:
+        parsed_entry = json.loads(line)
+        assert "agent" in parsed_entry
+        assert "run_id" in parsed_entry
+
+    # Clean up test JSONL
+    jsonl_path.unlink(missing_ok=True)
 
     print(f"\n  Pipeline OK: {ctx.metadata.table_count} tables, "
           f"{ctx.metadata.column_count} columns, "
           f"avg trust {ctx.metadata.average_trust:.0%}, "
           f"{ctx.metadata.sensitive_column_count} sensitive, "
-          f"{ctx.metadata.review_count} need review")
+          f"{ctx.metadata.review_count} need review, "
+          f"audit trail: {len(entries)} entries")
 
 
 def test_pipeline_degrades_on_semantic_failure():
@@ -235,6 +286,7 @@ def test_pipeline_degrades_on_semantic_failure():
         instead of crashing the aggregator.
       - Profiler / Lineage / PII Detector still produce normal output —
         partial results survive an isolated failure.
+      - Audit trail captures the failure with error and retry count.
     """
     from context_layer.agents.input_parser import input_parser_node
 
@@ -244,15 +296,8 @@ def test_pipeline_degrades_on_semantic_failure():
 
     profiler_out = _fake_profiler_output(tables)
 
-    # ------------------------------------------------------------------
-    # Patch time.sleep inside the retry helper so the test doesn't wait
-    # 1+2 = 3 seconds per failed LLM call (~12s total).
-    # ------------------------------------------------------------------
     with patch("context_layer.agents._retry.time.sleep", lambda *_: None):
 
-        # Build a mock LLM factory: profiler/lineage succeed, semantic always
-        # raises, trust_scorer must never be called for LLM scoring on
-        # upstream failure (we'll assert that).
         semantic_attempts = {"count": 0}
         trust_llm_calls = {"count": 0}
 
@@ -282,6 +327,8 @@ def test_pipeline_degrades_on_semantic_failure():
             mock_llm.with_structured_output = with_structured_output
             return mock_llm
 
+        logger = RunLogger(run_id="test-degraded")
+
         with patch("context_layer.agents.profiler.get_llm", make_mock_llm), \
              patch("context_layer.agents.lineage.get_llm", make_mock_llm), \
              patch("context_layer.agents.semantic.get_llm", make_mock_llm), \
@@ -289,12 +336,16 @@ def test_pipeline_degrades_on_semantic_failure():
 
             from context_layer.graph import build_graph
             graph = build_graph()
-            # MUST NOT raise — the whole point of Gap 6.
-            result = graph.invoke({"raw_schema": ddl, "schema_type": "sql"})
+            result = graph.invoke({
+                "raw_schema": ddl,
+                "schema_type": "sql",
+                "run_id": logger.run_id,
+                "run_logger": logger,
+            })
 
     ctx: ContextLayer = result["context_layer"]
 
-    # --- Retries actually happened: 3 attempts (1 initial + 2 retries) ---
+    # --- Retries actually happened ---
     assert semantic_attempts["count"] == 3, (
         f"Expected exactly 3 semantic attempts (initial + 2 retries), "
         f"got {semantic_attempts['count']}"
@@ -302,46 +353,49 @@ def test_pipeline_degrades_on_semantic_failure():
 
     # --- agent_health surfaced in metadata ---
     health = ctx.metadata.agent_health
-    assert health.get("semantic") == "failed", (
-        f"semantic should be 'failed', got {health.get('semantic')}"
-    )
+    assert health.get("semantic") == "failed"
     assert health.get("profiler") == "ok"
     assert health.get("lineage") == "ok"
 
-    # --- Trust Scorer skipped LLM (token-burn protection) ---
-    assert trust_llm_calls["count"] == 0, (
-        "Trust Scorer should not have called the LLM after upstream "
-        "Semantic failure — it should floor scores instead."
-    )
+    # --- Trust Scorer skipped LLM ---
+    assert trust_llm_calls["count"] == 0
 
-    # --- Every column floored to 0 + needs_review + upstream_failure flag ---
+    # --- Every column floored ---
     for tbl in ctx.tables:
         for col in tbl.columns:
-            assert col.trust_score == 0.0, (
-                f"{tbl.table_name}.{col.column_name} should be floored "
-                f"to 0.0 on upstream failure, got {col.trust_score}"
-            )
+            assert col.trust_score == 0.0
             assert col.needs_review is True
-            assert "upstream_failure" in col.trust_flags, (
-                f"{tbl.table_name}.{col.column_name} missing upstream_failure flag"
-            )
-            # Definition should be the typed empty fallback.
+            assert "upstream_failure" in col.trust_flags
             assert col.definition == "" or col.definition == "No definition generated"
 
-    # --- PII detection still ran (deterministic — survives LLM failures) ---
+    # --- PII detection still ran ---
     pii: PIIOutput = result["pii_output"]
-    assert pii.sensitive_column_count > 0, "PII detection should still work"
+    assert pii.sensitive_column_count > 0
 
-    # --- Tables and columns still enumerated correctly ---
     assert ctx.metadata.table_count == 6
     assert ctx.metadata.column_count > 0
+
+    # --- Audit trail captured failure ---
+    assert ctx.metadata.run_id == "test-degraded"
+
+    entries = logger.entries
+    semantic_entry = next(e for e in entries if e["agent"] == "semantic")
+    assert semantic_entry["health"] == "failed"
+    assert semantic_entry["error"] is not None
+    assert semantic_entry["attempts"] == 3
+
+    # JSONL was flushed
+    jsonl_path = _TEST_RUNS_DIR / "test-degraded.jsonl"
+    assert jsonl_path.exists()
+    jsonl_path.unlink(missing_ok=True)
 
     print(
         f"\n  Degraded pipeline OK: semantic failed after "
         f"{semantic_attempts['count']} attempts, "
         f"all {ctx.metadata.column_count} cols floored to 0, "
         f"PII still flagged {pii.sensitive_column_count} cols, "
-        f"trust scorer made {trust_llm_calls['count']} LLM calls"
+        f"trust scorer made {trust_llm_calls['count']} LLM calls, "
+        f"audit trail: {len(entries)} entries"
     )
 
 

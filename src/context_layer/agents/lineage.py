@@ -3,7 +3,7 @@
 Two-pass design:
   1. Deterministic pass: explicit FK constraints already parsed by InputParser
      get confidence 1.0 — these are facts, not guesses.
-  2. LLM-assisted pass: Haiku scans column names across tables to find
+  2. LLM-assisted pass: gpt-4o-mini scans column names across tables to find
      implicit relationships (e.g., orders.user_id → users.id). These get
      confidence 0.5–0.9 because naming conventions aren't guarantees.
 
@@ -114,23 +114,24 @@ def _find_orphans(
 def lineage_node(state: PipelineState) -> dict:
     """Run the Lineage Agent: schema → relationships + orphan tables."""
     tables: list[TableSchema] = state["tables"]
+    logger = state.get("run_logger")
 
-    # Deterministic pass — never fails.
     explicit = _extract_explicit(tables)
 
     schema_text = _build_schema_text(tables)
     llm = get_llm("fast").with_structured_output(_InferredRelationships)
+    prompt_text = f"Analyze these tables:\n\n{schema_text}"
 
     def _invoke() -> _InferredRelationships:
         return llm.invoke([
             SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content=f"Analyze these tables:\n\n{schema_text}"),
+            HumanMessage(content=prompt_text),
         ])
 
-    inferred_result, err = call_with_retries(_invoke)
+    rr = call_with_retries(_invoke)
 
     health: str
-    if inferred_result is not None:
+    if rr.value is not None:
         inferred = [
             Relationship(
                 source_table=r.source_table,
@@ -140,14 +141,23 @@ def lineage_node(state: PipelineState) -> dict:
                 relationship_type="inferred",
                 confidence=r.confidence,
             )
-            for r in inferred_result.relationships
+            for r in rr.value.relationships
         ]
         health = "ok"
     else:
-        # LLM inference exhausted retries. Explicit FKs still survive,
-        # so this is "degraded" not "failed".
         inferred = []
         health = "degraded"
+
+    if logger:
+        logger.log(
+            agent="lineage",
+            latency_ms=rr.latency_ms,
+            attempts=rr.attempts,
+            health=health,
+            prompt_preview=prompt_text,
+            response_preview=rr.value.model_dump_json() if rr.value else None,
+            error=str(rr.error) if rr.error else None,
+        )
 
     all_rels = explicit + inferred
     orphans = _find_orphans(tables, all_rels)

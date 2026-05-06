@@ -170,10 +170,14 @@ def _mask_ddl_fragment(raw: str, column_name: str, category: str) -> str:
 
 def pii_detector_node(state: PipelineState) -> dict:
     """Identify sensitive columns; produce flags + masked DDL fragments."""
+    import time as _time
+
     tables: list[TableSchema] = state["tables"]
     profiler: ProfilerOutput = state["profiler_output"]
+    logger = state.get("run_logger")
 
-    # Build profiler lookup: (table, col) → semantic_type
+    t0 = _time.monotonic()
+
     semantic_lookup: dict[tuple[str, str], str] = {}
     for tp in profiler.tables:
         for cp in tp.column_profiles:
@@ -201,6 +205,16 @@ def pii_detector_node(state: PipelineState) -> dict:
                 ),
                 reasoning=reasoning,
             ))
+
+    elapsed = (_time.monotonic() - t0) * 1000
+
+    if logger:
+        logger.log(
+            agent="pii_detector",
+            latency_ms=elapsed,
+            health="ok",
+            response_preview=f"{len(flags)} sensitive columns flagged",
+        )
 
     return {
         "pii_output": PIIOutput(

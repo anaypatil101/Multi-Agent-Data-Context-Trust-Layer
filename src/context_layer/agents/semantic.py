@@ -1,7 +1,7 @@
 """Semantic Agent — generates human-readable definitions for every table and column.
 
-Uses Sonnet (strong tier) because definition quality is the core deliverable
-of this pipeline. Cheap models produce vague definitions; Sonnet can
+Uses gpt-4o (strong tier) because definition quality is the core deliverable
+of this pipeline. Cheaper models produce vague definitions; gpt-4o can
 incorporate profiler context (detected patterns, anomalies) and lineage
 context (how tables relate) to produce definitions that actually help a
 data consumer understand what they're looking at.
@@ -77,7 +77,6 @@ def _build_context(
             col_map[cp.column_name] = ", ".join(parts)
         profile_lookup[tp.table_name] = col_map
 
-    # PII lookup: (table, col) → category. Used to mask the column line.
     pii_lookup: dict[tuple[str, str], str] = {
         (f.table_name, f.column_name): f.pii_category
         for f in pii.flagged_columns
@@ -98,9 +97,6 @@ def _build_context(
             pii_category = pii_lookup.get((t.name, c.name))
 
             if pii_category:
-                # Masked: only column name + type + category. No profile info,
-                # no DDL fragment. The LLM gets enough to define the column
-                # generically without seeing anything that could leak PII.
                 col_lines.append(
                     f"  {c.name} {c.data_type}"
                     f"{' NOT NULL' if not c.nullable else ''}"
@@ -126,14 +122,7 @@ def _build_context(
 
 
 def _degraded_output(tables: list[TableSchema]) -> SemanticOutput:
-    """Empty-but-typed semantic output used when all retries fail.
-
-    Every table and column gets a record with empty definition strings.
-    The Trust Scorer recognises empty definitions (via `agent_health`)
-    and floors those scores to 0.0 with flag `upstream_failure`, so the
-    user sees the deterministic outputs (profile / lineage / PII) intact
-    instead of getting a hard crash.
-    """
+    """Empty-but-typed semantic output used when all retries fail."""
     return SemanticOutput(tables=[
         TableDefinition(
             table_name=t.name,
@@ -158,25 +147,36 @@ def semantic_node(state: PipelineState) -> dict:
     profiler: ProfilerOutput = state["profiler_output"]
     lineage: LineageOutput = state["lineage_output"]
     pii: PIIOutput = state["pii_output"]
+    logger = state.get("run_logger")
 
     context = _build_context(tables, profiler, lineage, pii)
 
     llm = get_llm("strong").with_structured_output(SemanticOutput)
+    prompt_text = f"Generate definitions for:\n\n{context}"
 
     def _invoke() -> SemanticOutput:
         return llm.invoke([
             SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content=f"Generate definitions for:\n\n{context}"),
+            HumanMessage(content=prompt_text),
         ])
 
-    result, err = call_with_retries(_invoke)
-    if result is not None:
-        return {
-            "semantic_output": result,
-            "agent_health": {"semantic": "ok"},
-        }
+    rr = call_with_retries(_invoke)
 
-    # All retries exhausted — degrade to empty definitions.
+    health = "ok" if rr.value is not None else "failed"
+    if logger:
+        logger.log(
+            agent="semantic",
+            latency_ms=rr.latency_ms,
+            attempts=rr.attempts,
+            health=health,
+            prompt_preview=prompt_text,
+            response_preview=rr.value.model_dump_json() if rr.value else None,
+            error=str(rr.error) if rr.error else None,
+        )
+
+    if rr.value is not None:
+        return {"semantic_output": rr.value, "agent_health": {"semantic": "ok"}}
+
     return {
         "semantic_output": _degraded_output(tables),
         "agent_health": {"semantic": "failed"},

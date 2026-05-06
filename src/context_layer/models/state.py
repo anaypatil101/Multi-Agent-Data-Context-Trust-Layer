@@ -12,7 +12,7 @@ the second writer from clobbering the first.
 
 from __future__ import annotations
 
-from typing import Annotated, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from context_layer.models.outputs import (
     AgentHealth,
@@ -24,6 +24,9 @@ from context_layer.models.outputs import (
     TrustOutput,
 )
 from context_layer.models.schema import TableSchema
+
+if TYPE_CHECKING:
+    from context_layer.run_logger import RunLogger
 
 
 def _merge_health(
@@ -49,6 +52,9 @@ class PipelineState(TypedDict, total=False):
     `total=False` lets agents return partial updates — each node only
     sets the keys it owns. LangGraph shallow-merges the returned dict
     into the running state.
+
+    `run_id` and `run_logger` are set once at invoke time by the API /
+    CLI caller and never overwritten by agents.
     """
 
     raw_schema: str
@@ -61,3 +67,5 @@ class PipelineState(TypedDict, total=False):
     trust_output: TrustOutput
     context_layer: ContextLayer
     agent_health: Annotated[dict[str, AgentHealth], _merge_health]
+    run_id: str
+    run_logger: Any
