@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentic Context Layer — Live Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+  <style>
+    :root {
+      --bg:       #0d0f1a;
+      --surface:  #151826;
+      --raised:   #1c1f30;
+      --border:   #252840;
+      --text:     #e2e4f0;
+      --muted:    #7077a1;
+      --green:    #4ade80;
+      --yellow:   #facc15;
+      --red:      #f87171;
+      --blue:     #60a5fa;
+      --purple:   #c084fc;
+      --orange:   #fb923c;
+      --teal:     #2dd4bf;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    /* ── top bar ── */
+    .topbar {
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .topbar-brand { display: flex; align-items: center; gap: 0.75rem; }
+    .topbar-brand .logo {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+    }
+    .topbar-brand h1 { font-size: 1rem; font-weight: 600; }
+    .topbar-brand span { color: var(--muted); font-size: 0.8125rem; }
+    .topbar-links { display: flex; gap: 0.75rem; }
+    .topbar-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.8125rem;
+      padding: 0.3rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .topbar-links a:hover { border-color: var(--blue); color: var(--blue); }
+
+    /* ── hero (loading state) ── */
+    #loading { padding: 3rem 2rem; max-width: 860px; margin: 0 auto; }
+
+    .hero { text-align: center; margin-bottom: 3rem; }
+    .hero h2 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .hero p  { color: var(--muted); font-size: 0.9375rem; max-width: 520px; margin: 0 auto 1.25rem; }
+    .demo-badge {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      background: rgba(96,165,250,0.1); border: 1px solid rgba(96,165,250,0.3);
+      color: var(--blue); font-size: 0.75rem; font-weight: 600;
+      padding: 0.3rem 0.75rem; border-radius: 999px; letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── pipeline steps ── */
+    .pipeline {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      position: relative;
+    }
+
+    .step-row {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+    }
+
+    .step-row.parallel {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+
+    .step-connector {
+      display: flex;
+      justify-content: center;
+      padding: 0.35rem 0;
+    }
+    .step-connector svg { color: var(--border); }
+
+    .step-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.875rem 1.125rem;
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      flex: 1;
+      transition: border-color 0.3s, background 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+    .step-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(99,102,241,0.04) 50%, transparent 100%);
+      transform: translateX(-100%);
+      transition: none;
+    }
+    .step-card.running { border-color: #6366f1; }
+    .step-card.running::before {
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    .step-card.done { border-color: rgba(74,222,128,0.35); background: rgba(74,222,128,0.03); }
+
+    @keyframes shimmer {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    .step-icon {
+      width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      transition: background 0.3s, border-color 0.3s;
+    }
+    .step-card.running .step-icon { background: rgba(99,102,241,0.15); border-color: #6366f1; }
+    .step-card.done    .step-icon { background: rgba(74,222,128,0.12); border-color: rgba(74,222,128,0.4); }
+
+    .step-info { flex: 1; min-width: 0; }
+    .step-info .step-name {
+      font-weight: 600; font-size: 0.875rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .step-info .step-note { color: var(--muted); font-size: 0.75rem; margin-top: 0.1rem; }
+
+    .step-status {
+      font-size: 0.75rem; font-weight: 600; flex-shrink: 0;
+      display: flex; align-items: center; gap: 0.35rem;
+    }
+    .step-status.pending { color: var(--muted); }
+    .step-status.running { color: #818cf8; }
+    .step-status.done    { color: var(--green); }
+
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(129,140,248,0.3);
+      border-top-color: #818cf8;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── slow-load notice ── */
+    #slow-notice {
+      display: none;
+      margin-top: 2rem;
+      padding: 0.875rem 1.25rem;
+      background: rgba(250,204,21,0.07);
+      border: 1px solid rgba(250,204,21,0.25);
+      border-radius: 8px;
+      font-size: 0.8125rem;
+      color: var(--yellow);
+    }
+    #slow-notice strong { font-weight: 600; }
+
+    /* ── elapsed timer ── */
+    .timer {
+      text-align: center;
+      margin-top: 1.5rem;
+      color: var(--muted);
+      font-size: 0.8125rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .timer span { color: var(--text); }
+
+    /* ── results ── */
+    #results { display: none; padding: 2rem; max-width: 1000px; margin: 0 auto; }
+
+    .result-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .result-header h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .result-header p  { color: var(--muted); font-size: 0.875rem; }
+    .run-meta { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+    .run-pill {
+      font-size: 0.75rem;
+      padding: 0.3rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .run-pill.demo-pill {
+      background: rgba(96,165,250,0.1);
+      border-color: rgba(96,165,250,0.3);
+      color: var(--blue);
+    }
+
+    .stats {
+      display: flex; gap: 0.875rem; margin-bottom: 1.75rem; flex-wrap: wrap;
+    }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.875rem 1.25rem; min-width: 130px; flex: 1;
+    }
+    .stat-card .label {
+      color: var(--muted); font-size: 0.7rem; text-transform: uppercase;
+      letter-spacing: 0.06em; font-weight: 500;
+    }
+    .stat-card .value { font-size: 1.375rem; font-weight: 700; margin-top: 0.2rem; }
+
+    .table-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; margin-bottom: 1.25rem; overflow: hidden;
+    }
+    .table-header {
+      padding: 0.875rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 0.5rem;
+    }
+    .table-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1rem; font-weight: 600;
+    }
+    .table-def {
+      padding: 0.75rem 1.25rem;
+      color: var(--muted); font-size: 0.85rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .badges { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+
+    .badge {
+      font-size: 0.7rem; font-weight: 600; padding: 0.2rem 0.55rem;
+      border-radius: 999px; letter-spacing: 0.03em;
+    }
+    .badge-domain { background: rgba(96,165,250,0.12); color: var(--blue); }
+    .badge-trust-high  { background: rgba(74,222,128,0.12); color: var(--green); }
+    .badge-trust-mid   { background: rgba(250,204,21,0.12); color: var(--yellow); }
+    .badge-trust-low   { background: rgba(248,113,113,0.12); color: var(--red); }
+    .badge-review { background: rgba(248,113,113,0.12); color: var(--red); }
+    .badge-pii    { background: rgba(251,146,60,0.15); color: var(--orange); text-transform: uppercase; }
+    .badge-semantic { background: rgba(192,132,252,0.12); color: var(--purple); }
+
+    .col-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+    .col-table th {
+      text-align: left; color: var(--muted); font-weight: 500;
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+      padding: 0.5rem 0.875rem; border-bottom: 1px solid var(--border);
+    }
+    .col-table td {
+      padding: 0.55rem 0.875rem; border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .col-table tr:last-child td { border-bottom: none; }
+    .col-name { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: var(--purple); }
+    .col-type { font-family: 'JetBrains Mono', monospace; color: var(--muted); font-size: 0.72rem; }
+
+    .rels {
+      padding: 0.75rem 1.25rem;
+      border-top: 1px solid var(--border);
+    }
+    .rels-title {
+      font-size: 0.7rem; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.05em; margin-bottom: 0.4rem;
+    }
+    .rel-row {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem; padding: 0.2rem 0; color: var(--text);
+    }
+    .rel-arrow { color: var(--blue); margin: 0 0.4rem; }
+    .rel-type-tag { color: var(--muted); font-size: 0.7rem; }
+
+    .health-bar {
+      margin-bottom: 1.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+    }
+    .health-bar-title {
+      font-size: 0.75rem; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.06em; margin-bottom: 0.75rem; font-weight: 500;
+    }
+    .health-agents { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+    .health-agent {
+      display: flex; align-items: center; gap: 0.4rem;
+      font-size: 0.8rem; font-family: 'JetBrains Mono', monospace;
+    }
+    .health-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+    }
+    .health-ok       .health-dot { background: var(--green); }
+    .health-degraded .health-dot { background: var(--yellow); }
+    .health-failed   .health-dot { background: var(--red); }
+
+    .meta-footer {
+      margin-top: 1.5rem;
+      padding: 0.875rem 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: flex; gap: 1rem; flex-wrap: wrap;
+    }
+    .meta-footer span { display: flex; gap: 0.3rem; }
+    .meta-footer b { color: var(--text); font-weight: 500; }
+
+    /* ── fade-in ── */
+    .fade-in {
+      animation: fadeIn 0.5s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── error state ── */
+    #error-state {
+      display: none;
+      max-width: 560px; margin: 3rem auto; padding: 0 2rem; text-align: center;
+    }
+    #error-state h3 { font-size: 1.125rem; margin-bottom: 0.5rem; color: var(--red); }
+    #error-state p  { color: var(--muted); font-size: 0.875rem; }
+    #error-detail {
+      margin-top: 1rem; padding: 0.875rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem; color: var(--orange);
+      text-align: left; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* ── responsive ── */
+    @media (max-width: 600px) {
+      .step-row.parallel { grid-template-columns: 1fr; }
+      #loading, #results { padding: 1.5rem 1rem; }
+      .topbar { padding: 0.75rem 1rem; }
+      .result-header { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── top bar ── -->
+<header class="topbar">
+  <div class="topbar-brand">
+    <div class="logo">⚙</div>
+    <div>
+      <h1>Agentic Context Layer</h1>
+      <span>Multi-agent LangGraph · Trusted data governance</span>
+    </div>
+  </div>
+  <nav class="topbar-links">
+    <a href="/docs" target="_blank">API docs</a>
+    <a href="https://github.com/anaypatil/agentic-data-context-layer" target="_blank">GitHub</a>
+  </nav>
+</header>
+
+<!-- ── loading state ── -->
+<div id="loading">
+  <div class="hero">
+    <span class="demo-badge">⚡ Live demo</span>
+    <h2 style="margin-top:1rem;">Running the governance pipeline</h2>
+    <p>6 AI agents are analysing a sample e-commerce schema right now — profiling columns, inferring lineage, detecting PII, generating definitions, and scoring trust.</p>
+  </div>
+
+  <div class="pipeline">
+
+    <!-- InputParser -->
+    <div class="step-row">
+      <div class="step-card" id="step-input_parser">
+        <div class="step-icon">📥</div>
+        <div class="step-info">
+          <div class="step-name">InputParser</div>
+          <div class="step-note">Parsing DDL · no LLM · 6 tables, ~32 columns</div>
+        </div>
+        <div class="step-status pending" id="status-input_parser">
+          <span>waiting</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="step-connector">
+      <svg width="2" height="20" viewBox="0 0 2 20" fill="none">
+        <line x1="1" y1="0" x2="1" y2="20" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/>
+      </svg>
+    </div>
+
+    <!-- Profiler + Lineage (parallel) -->
+    <div class="step-row parallel">
+      <div class="step-card" id="step-profiler">
+        <div class="step-icon">🔬</div>
+        <div class="step-info">
+          <div class="step-name">Profiler</div>
+          <div class="step-note">gpt-4o-mini · types, nulls, patterns, anomalies</div>
+        </div>
+        <div class="step-status pending" id="status-profiler"><span>waiting</span></div>
+      </div>
+      <div class="step-card" id="step-lineage">
+        <div class="step-icon">🕸️</div>
+        <div class="step-info">
+          <div class="step-name">Lineage</div>
+          <div class="step-note">gpt-4o-mini · FKs · inferred deps · orphans</div>
+        </div>
+        <div class="step-status pending" id="status-lineage"><span>waiting</span></div>
+      </div>
+    </div>
+
+    <div class="step-connector">
+      <svg width="2" height="20" viewBox="0 0 2 20" fill="none">
+        <line x1="1" y1="0" x2="1" y2="20" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/>
+      </svg>
+    </div>
+
+    <!-- PII Detector -->
+    <div class="step-row">
+      <div class="step-card" id="step-pii_detector">
+        <div class="step-icon">🔒</div>
+        <div class="step-info">
+          <div class="step-name">PII Detector</div>
+          <div class="step-note">Deterministic · 9 categories · DDL masking before LLM</div>
+        </div>
+        <div class="step-status pending" id="status-pii_detector"><span>waiting</span></div>
+      </div>
+    </div>
+
+    <div class="step-connector">
+      <svg width="2" height="20" viewBox="0 0 2 20" fill="none">
+        <line x1="1" y1="0" x2="1" y2="20" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/>
+      </svg>
+    </div>
+
+    <!-- Semantic -->
+    <div class="step-row">
+      <div class="step-card" id="step-semantic">
+        <div class="step-icon">📖</div>
+        <div class="step-info">
+          <div class="step-name">Semantic</div>
+          <div class="step-note">gpt-4o · business definitions + domain + semantic typing</div>
+        </div>
+        <div class="step-status pending" id="status-semantic"><span>waiting</span></div>
+      </div>
+    </div>
+
+    <div class="step-connector">
+      <svg width="2" height="20" viewBox="0 0 2 20" fill="none">
+        <line x1="1" y1="0" x2="1" y2="20" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/>
+      </svg>
+    </div>
+
+    <!-- Trust Scorer -->
+    <div class="step-row">
+      <div class="step-card" id="step-trust_scorer">
+        <div class="step-icon">🎯</div>
+        <div class="step-info">
+          <div class="step-name">Trust Scorer</div>
+          <div class="step-note">gpt-4o + deterministic rules · calibrated 0–1 per definition</div>
+        </div>
+        <div class="step-status pending" id="status-trust_scorer"><span>waiting</span></div>
+      </div>
+    </div>
+
+    <div class="step-connector">
+      <svg width="2" height="20" viewBox="0 0 2 20" fill="none">
+        <line x1="1" y1="0" x2="1" y2="20" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/>
+      </svg>
+    </div>
+
+    <!-- Aggregator -->
+    <div class="step-row">
+      <div class="step-card" id="step-aggregator">
+        <div class="step-icon">📦</div>
+        <div class="step-info">
+          <div class="step-name">Aggregator</div>
+          <div class="step-note">Assembling governed context layer · flushing audit trail</div>
+        </div>
+        <div class="step-status pending" id="status-aggregator"><span>waiting</span></div>
+      </div>
+    </div>
+
+  </div><!-- /pipeline -->
+
+  <div id="slow-notice">
+    <strong>Cold start:</strong> the first request spins up the LLM calls fresh — this usually takes 25–35 s. Results are cached so every subsequent visit is instant.
+  </div>
+
+  <div class="timer">Elapsed: <span id="elapsed">0</span>s</div>
+</div><!-- /loading -->
+
+<!-- ── error state ── -->
+<div id="error-state">
+  <h3>Pipeline failed</h3>
+  <p>Something went wrong while running the agents. Check that <code>OPENAI_API_KEY</code> is set on the server.</p>
+  <pre id="error-detail"></pre>
+</div>
+
+<!-- ── results ── -->
+<div id="results"></div>
+
+<script>
+// ── animation schedule (estimated wall-clock for each agent) ──────────────
+const STEPS = [
+  { id: 'input_parser', start: 0,    end: 1500  },
+  { id: 'profiler',     start: 1600, end: 6000  },
+  { id: 'lineage',      start: 1600, end: 6000  },
+  { id: 'pii_detector', start: 6200, end: 7200  },
+  { id: 'semantic',     start: 7400, end: 16000 },
+  { id: 'trust_scorer', start: 16200,end: 26000 },
+  { id: 'aggregator',   start: 26200,end: 27500 },
+];
+
+const startTime = Date.now();
+let fetchDone = false;
+let animDone  = false;
+let fetchData = null;
+
+// ── elapsed timer ─────────────────────────────────────────────────────────
+const elapsedEl = document.getElementById('elapsed');
+const timerInterval = setInterval(() => {
+  elapsedEl.textContent = ((Date.now() - startTime) / 1000).toFixed(1);
+}, 200);
+
+// ── show slow-notice after 18 s ───────────────────────────────────────────
+setTimeout(() => {
+  if (!fetchDone) document.getElementById('slow-notice').style.display = 'block';
+}, 18000);
+
+// ── step state helpers ────────────────────────────────────────────────────
+function setStepRunning(id) {
+  const card   = document.getElementById('step-' + id);
+  const status = document.getElementById('status-' + id);
+  if (!card) return;
+  card.classList.add('running');
+  status.className = 'step-status running';
+  status.innerHTML = '<div class="spinner"></div><span>running</span>';
+}
+
+function setStepDone(id) {
+  const card   = document.getElementById('step-' + id);
+  const status = document.getElementById('status-' + id);
+  if (!card) return;
+  card.classList.remove('running');
+  card.classList.add('done');
+  status.className = 'step-status done';
+  status.innerHTML = '<span>✓ done</span>';
+}
+
+// ── animate steps according to schedule ───────────────────────────────────
+let stepTimers = [];
+STEPS.forEach(step => {
+  stepTimers.push(setTimeout(() => setStepRunning(step.id), step.start));
+  stepTimers.push(setTimeout(() => {
+    setStepDone(step.id);
+    if (step.id === 'aggregator') {
+      animDone = true;
+      tryReveal();
+    }
+  }, step.end));
+});
+
+// ── fetch pipeline result ──────────────────────────────────────────────────
+fetch('/analyze/demo')
+  .then(r => {
+    if (!r.ok) return r.json().then(e => { throw new Error(e.detail || r.statusText); });
+    return r.json();
+  })
+  .then(data => {
+    fetchData = data;
+    fetchDone = true;
+    document.getElementById('slow-notice').style.display = 'none';
+    // If animation already finished, reveal immediately; otherwise wait for it
+    if (animDone) tryReveal();
+    else {
+      // Fast-forward: complete remaining steps quickly
+      stepTimers.forEach(t => clearTimeout(t));
+      let delay = 0;
+      STEPS.forEach(step => {
+        const card = document.getElementById('step-' + step.id);
+        if (card && !card.classList.contains('done')) {
+          if (!card.classList.contains('running')) {
+            setTimeout(() => setStepRunning(step.id), delay);
+            delay += 180;
+          }
+          setTimeout(() => {
+            setStepDone(step.id);
+            if (step.id === 'aggregator') { animDone = true; tryReveal(); }
+          }, delay + 300);
+          delay += 480;
+        }
+      });
+    }
+  })
+  .catch(err => {
+    clearInterval(timerInterval);
+    document.getElementById('loading').style.display = 'none';
+    const es = document.getElementById('error-state');
+    document.getElementById('error-detail').textContent = String(err);
+    es.style.display = 'block';
+  });
+
+// ── reveal results once BOTH fetch + animation are done ───────────────────
+function tryReveal() {
+  if (!fetchDone || !animDone) return;
+  clearInterval(timerInterval);
+  setTimeout(() => {
+    document.getElementById('loading').style.display = 'none';
+    renderResults(fetchData);
+    const results = document.getElementById('results');
+    results.style.display = 'block';
+    results.classList.add('fade-in');
+  }, 300);
+}
+
+// ── rendering helpers ──────────────────────────────────────────────────────
+function trustClass(score) {
+  return score >= 0.8 ? 'badge-trust-high' : score >= 0.6 ? 'badge-trust-mid' : 'badge-trust-low';
+}
+function pct(score) { return Math.round(score * 100) + '%'; }
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+function renderResults(ctx) {
+  const meta = ctx.metadata;
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  const runDate = new Date(meta.generated_at).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+
+  // ── header ──
+  let html = `
+  <div class="result-header">
+    <div>
+      <h2>Governance report ready</h2>
+      <p>Generated in ${elapsed}s · ${runDate} · sample e-commerce schema</p>
+    </div>
+    <div class="run-meta">
+      <span class="run-pill demo-pill">DEMO</span>
+      <span class="run-pill" title="Run ID">#${esc(meta.run_id ?? 'n/a')}</span>
+    </div>
+  </div>`;
+
+  // ── stat cards ──
+  html += `<div class="stats">
+    <div class="stat-card">
+      <div class="label">Tables</div>
+      <div class="value">${meta.table_count}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Columns</div>
+      <div class="value">${meta.column_count}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Avg Trust</div>
+      <div class="value" style="color:${meta.average_trust>=0.8?'var(--green)':meta.average_trust>=0.6?'var(--yellow)':'var(--red)'}">${pct(meta.average_trust)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Needs Review</div>
+      <div class="value" style="color:${meta.review_count===0?'var(--green)':'var(--red)'}">${meta.review_count}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Sensitive Cols</div>
+      <div class="value" style="color:${meta.sensitive_column_count===0?'var(--muted)':'var(--orange)'}">${meta.sensitive_column_count}</div>
+    </div>
+  </div>`;
+
+  // ── agent health ──
+  if (meta.agent_health && Object.keys(meta.agent_health).length) {
+    html += `<div class="health-bar"><div class="health-bar-title">Agent health</div><div class="health-agents">`;
+    for (const [agent, health] of Object.entries(meta.agent_health)) {
+      html += `<div class="health-agent health-${esc(health)}">
+        <div class="health-dot"></div><span>${esc(agent)}</span>
+        <span style="color:var(--muted);font-size:0.7rem">${esc(health)}</span>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  // ── table cards ──
+  for (const table of ctx.tables) {
+    const tc = trustClass(table.trust_score);
+    html += `<div class="table-card">
+      <div class="table-header">
+        <span class="table-name">${esc(table.table_name)}</span>
+        <div class="badges">
+          <span class="badge badge-domain">${esc(table.domain)}</span>
+          <span class="badge ${tc}">${pct(table.trust_score)} trust</span>
+          ${table.needs_review ? '<span class="badge badge-review">NEEDS REVIEW</span>' : ''}
+        </div>
+      </div>
+      <div class="table-def">${esc(table.definition)}</div>
+      <div style="overflow-x:auto">
+        <table class="col-table">
+          <thead><tr>
+            <th>Column</th><th>Type</th><th>Definition</th><th>Semantic</th><th>Trust</th>
+          </tr></thead>
+          <tbody>`;
+
+    for (const col of table.columns) {
+      const cc = trustClass(col.trust_score);
+      html += `<tr>
+        <td>
+          <span class="col-name">${esc(col.column_name)}</span>
+          ${col.is_sensitive ? `<span class="badge badge-pii" style="margin-left:0.4rem">PII: ${esc(col.pii_category)}</span>` : ''}
+        </td>
+        <td class="col-type">${esc(col.data_type)}</td>
+        <td style="font-size:0.8rem">${esc(col.definition)}</td>
+        <td><span class="badge badge-semantic">${esc(col.semantic_type)}</span></td>
+        <td>
+          <span class="badge ${cc}">${pct(col.trust_score)}</span>
+          ${col.needs_review ? '<span class="badge badge-review" style="margin-left:0.3rem">REVIEW</span>' : ''}
+        </td>
+      </tr>`;
+    }
+
+    html += `</tbody></table></div>`;
+
+    if (table.relationships && table.relationships.length) {
+      html += `<div class="rels"><div class="rels-title">Relationships</div>`;
+      for (const rel of table.relationships) {
+        html += `<div class="rel-row">
+          ${esc(rel.source_table)}.${esc(rel.source_column)}
+          <span class="rel-arrow">→</span>
+          ${esc(rel.target_table)}.${esc(rel.target_column)}
+          <span class="rel-type-tag">(${esc(rel.relationship_type)}, ${pct(rel.confidence)})</span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  // ── metadata footer ──
+  const models = Object.entries(meta.models_used ?? {}).map(
+    ([a, m]) => `<span><b>${esc(a)}:</b> ${esc(m)}</span>`
+  ).join('');
+  html += `<div class="meta-footer">
+    <span><b>Schema:</b> ${esc(meta.schema_type)}</span>
+    <span><b>Run ID:</b> <span style="font-family:'JetBrains Mono',monospace">${esc(meta.run_id ?? '—')}</span></span>
+    ${models}
+    <span style="margin-left:auto"><a href="/runs/${esc(meta.run_id ?? '')}" style="color:var(--blue);text-decoration:none;font-size:0.75rem">View audit trail →</a></span>
+  </div>`;
+
+  document.getElementById('results').innerHTML = html;
+}
+</script>
+</body>
+</html>
