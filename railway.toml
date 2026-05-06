@@ -2,7 +2,7 @@
 buildCommand = "pip install -r requirements.txt"
 
 [deploy]
-startCommand = "python -m uvicorn src.context_layer.api:app --host 0.0.0.0 --port $PORT"
+startCommand = "PYTHONPATH=src python -m uvicorn context_layer.api:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"
