@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+langgraph
+langchain-anthropic
+langchain-openai
+langchain-core
+pydantic
+jinja2
+rich
+python-dotenv
